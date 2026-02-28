@@ -1,52 +1,96 @@
 import requests
+import json
 from bs4 import BeautifulSoup
+from newspaper import Article
+import time
 
-# Function to scrape election news from a website
-def scrape_news(url, paper_name):
-    print(f"\nScraping election news from: {paper_name}")
-
-    response = requests.get(url)
-
-    if response.status_code != 200:
-        print("❌ Failed to fetch:", url)
-        return []
-
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    headlines = []
-
-    # Extract headlines from h2 and h3 tags
-    for tag in soup.find_all(["h2", "h3"]):
-        text = tag.get_text(strip=True)
-
-        # Filter only election related news
-        if "election" in text.lower() or "निर्वाचन" in text:
-            headlines.append(text)
-
-    return headlines
-
-
-# Newspaper Source
-sources = [ ("https://www.onlinekhabar.com/?s=निर्वाचन", "OnlineKhabar")
-   
+# --- Updated News Sources ---
+NEWS_SOURCES = [
+    {
+        "newspaper": "MyRepublica",
+        "base_url": "https://myrepublica.nagariknetwork.com"
+    },
+    {
+        "newspaper": "The Rising Nepal",
+        "base_url": "https://risingnepaldaily.com"
+    }
 ]
 
-all_data = []
+POLITICAL_KEYWORDS = [
+    "election", "vote", "voting", "parliament", "government",
+    "prime minister", "minister", "party", "candidate",
+    "assembly", "congress", "uml", "maoist", "coalition",
+    "ballot", "commission", "poll", "constitutional"
+]
 
-# Scrape each site
-for url, name in sources:
-    news = scrape_news(url, name)
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-    for item in news[:5]:  # Only first 5 headlines
-        all_data.append(f"{name}: {item}")
+def is_political(title):
+    title = title.lower()
+    return any(word in title for word in POLITICAL_KEYWORDS)
 
+def extract_article_text(url):
+    try:
+        article = Article(url)
+        article.download()
+        article.parse()
+        return article.text
+    except:
+        return ""
 
-# Save into file
-with open("election_news.txt", "w", encoding="utf-8") as file:
-    file.write("Election News Data from 3 Newspapers\n")
-    file.write("====================================\n\n")
+def summarize_text(text, max_sentences=3):
+    sentences = text.split(". ")
+    summary = ". ".join(sentences[:max_sentences])
+    return summary.strip() + "."
 
-    for line in all_data:
-        file.write(line + "\n")
+def scrape_homepage(source):
+    articles = []
+    try:
+        response = requests.get(source["base_url"], headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.text, "html.parser")
+        links = soup.find_all("a", href=True)
 
-print("\n✅ Data saved successfully into election_news.txt")
+        for link in links:
+            title = link.get_text(strip=True)
+            url = link["href"]
+
+            if not title or len(title) < 25:
+                continue
+
+            if not url.startswith("http"):
+                url = source["base_url"] + url
+
+            if is_political(title):
+                articles.append({
+                    "title": title,
+                    "url": url,
+                    "source": source["newspaper"]
+                })
+        return articles[:6]  
+    except:
+        return []
+
+results = []
+
+for source in NEWS_SOURCES:
+    print(f"Scraping {source['newspaper']}...")
+    article_links = scrape_homepage(source)
+
+    for article in article_links:
+        text = extract_article_text(article["url"])
+        if text.strip():
+            summary = summarize_text(text)
+            results.append({
+                "source": article["source"],
+                "title": article["title"],
+                "url": article["url"],
+                "summary": summary
+            })
+        time.sleep(2)  
+
+with open("nepal_election_summaries.json", "w", encoding="utf-8") as f:
+    json.dump(results, f, indent=4, ensure_ascii=False)
+
+print("\nElection summaries saved in nepal_election_summaries.json")
